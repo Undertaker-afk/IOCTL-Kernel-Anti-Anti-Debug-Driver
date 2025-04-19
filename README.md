@@ -54,20 +54,20 @@ Class Process wraps around some WinAPI calls to interact with a target process.
 
 Constructor: 
 ```cpp
-Process(const char* name) — Finds the PID of the process and stores it in pid. Also opens a handle with OpenProcess.
+Process(const char* name) // Finds the PID of the process and stores it in pid. Also opens a handle with OpenProcess.
 ```
 
 Functions:  
 ```cpp
-- bool GetModules() — Uses CreateToolhelp32Snapshot to collect loaded modules of the process  
-- void PrintAllModules(bool print_addresses = false) — Prints module names and optionally base addresses  
+bool GetModules() // Collects all loaded modules of the process and fills them into the "modules" map to allow easy module indexing.
+void PrintAllModules(bool print_addresses = false) // Prints module names and optionally base addresses  
 ```
 Destructor:  
 Closes the process handle.
 
 Members:
 ```cpp
-- std::map<std::string, uintptr_t> modules — Contains module names and their base addresses for easy offset calculation.
+std::map<std::string, uintptr_t> modules // Contains module names and their base addresses for easy offset calculation and module indexing.
 ```
 
 🚀 Example Use  

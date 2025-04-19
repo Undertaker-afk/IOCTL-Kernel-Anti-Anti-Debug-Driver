@@ -27,16 +27,19 @@ This design allows a user‑mode cheat to interface with the driver and read/wri
 ✅ driver_helper.h  
 Contains a lightweight wrapper class ioctl::Driver to interface with the kernel driver using DeviceIoControl.  
 
-Functions:  
-- attach_to_process(DWORD pid) — Sends the IOCTL attach code to the driver with the target PID  
-- read_memory<T>(uintptr_t address) — Template function to read memory from the attached process  
-- write_memory<T>(uintptr_t address, const T& value) — Template function to write memory into the attached process  
-
+Functions: 
+```cpp
+attach_to_process(DWORD pid) // Sends the IOCTL attach code to the driver with the target PID  
+read_memory<T>(uintptr_t address) // Template function to read memory from the attached process  
+write_memory<T>(uintptr_t address, const T& value) // Template function to write memory into the attached process  
+```
 All of these internally use DeviceIoControl with the custom IOCTL codes (read, write, attach).
 
 ✅ error_helper.h  
 Contains a utility function:  
+```cpp
 std::string GetErrorString(DWORD errorCode)  
+```
 Converts a Win32 error code to a human‑readable string using FormatMessageA. Useful for debugging WinAPI failures.
 
 ✅ offsets.h  

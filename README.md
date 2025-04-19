@@ -42,37 +42,43 @@ Converts a Win32 error code to a human‑readable string using FormatMessageA. U
 ✅ offsets.h  
 Basic namespace for storing memory offsets:  
 namespace offsets  
+```cpp
 {  
     ::uintptr_t exampleOffset = 0xEC;  
-}  
+}
+```
 You can define your own offsets here for use with read_memory and write_memory.
 
 ✅ process_helper.h  
 Class Process wraps around some WinAPI calls to interact with a target process.
 
-Constructor:  
+Constructor: 
+```cpp
 Process(const char* name) — Finds the PID of the process and stores it in pid. Also opens a handle with OpenProcess.
+```
 
 Functions:  
+```cpp
 - bool GetModules() — Uses CreateToolhelp32Snapshot to collect loaded modules of the process  
 - void PrintAllModules(bool print_addresses = false) — Prints module names and optionally base addresses  
-
+```
 Destructor:  
 Closes the process handle.
 
-Members:  
+Members:
+```cpp
 - std::map<std::string, uintptr_t> modules — Contains module names and their base addresses for easy offset calculation.
+```
 
 🚀 Example Use  
 After loading the driver and ensuring it’s running, in your user‑mode client you might write:
+```cpp
+Process process("ExampleProcessName.exe");  
 
-Process process("Game.exe");  
-HANDLE driver_handle = CreateFile("\\\\.\\MyKernelDriver", GENERIC_ALL, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-
-uintptr_t baseAddress = process.modules["Game.exe"];  
+uintptr_t baseAddress = process.modules["Game.exe"];
 uintptr_t localPlayer = driver.read_memory<uintptr_t>(baseAddress + offsets::exampleOffset);  
 int health = driver.read_memory<int>(localPlayer + offsets::exampleOffset);
-
+```
 ✅ Tested On  
 - Windows 10 VM (VirtualBox)  
 - Test target: Dummy application  

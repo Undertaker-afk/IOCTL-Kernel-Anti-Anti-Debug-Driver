@@ -5,10 +5,13 @@
 #include <string>
 #include <vector>
 #include <memory>
-#include "../headers/debug_manager.h"
-#include "../headers/mitm_proxy.h"
-#include "../headers/driver_helper.h"
-#include "../headers/kdmapper_manager.h"
+
+// Forward declarations
+class DebugManager;
+class MitmProxy;
+struct NetworkPacket;
+namespace ioctl { class Driver; }
+class KdMapperManager;
 
 #pragma comment(lib, "comctl32.lib")
 
@@ -47,6 +50,7 @@ public:
     ~GuiManager();
 
     bool Initialize();
+    bool InitializeKdMapper();
     void Run();
     void Shutdown();
 

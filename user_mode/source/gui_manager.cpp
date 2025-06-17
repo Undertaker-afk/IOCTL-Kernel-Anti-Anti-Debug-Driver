@@ -1,4 +1,8 @@
 #include "../headers/gui_manager.h"
+#include "../headers/debug_manager.h"
+#include "../headers/mitm_proxy.h"
+#include "../headers/driver_helper.h"
+#include "../headers/kdmapper_manager.h"
 #include <commctrl.h>
 #include <commdlg.h>
 #include <tlhelp32.h>

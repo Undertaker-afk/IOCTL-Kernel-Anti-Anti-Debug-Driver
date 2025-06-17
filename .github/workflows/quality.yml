@@ -1,0 +1,196 @@
+name: Code Quality & Security
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 0 * * 1'  # Weekly on Monday
+
+jobs:
+  static-analysis:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v1.3
+      
+    - name: Run PVS-Studio Static Analysis
+      run: |
+        # Download PVS-Studio if available
+        echo "Static analysis would run here"
+        
+    - name: C++ Linting with clang-tidy
+      run: |
+        # Install LLVM/Clang
+        choco install llvm -y
+        
+        # Run clang-tidy on source files
+        Get-ChildItem -Path "." -Include "*.cpp", "*.h" -Recurse | ForEach-Object {
+          clang-tidy $_.FullName -- -std=c++20
+        }
+        
+    - name: Check Code Formatting
+      run: |
+        # Install clang-format
+        choco install llvm -y
+        
+        # Check formatting
+        Get-ChildItem -Path "." -Include "*.cpp", "*.h" -Recurse | ForEach-Object {
+          $formatted = clang-format $_.FullName
+          $original = Get-Content $_.FullName -Raw
+          if ($formatted -ne $original) {
+            Write-Error "File $($_.Name) is not properly formatted"
+            exit 1
+          }
+        }
+
+  security-scan:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v2
+      with:
+        languages: cpp
+        queries: security-and-quality
+        
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v1.3
+      
+    - name: Build for Security Analysis
+      run: |
+        msbuild /m /p:Configuration=Debug /p:Platform=x64 "IOCTL Cheat Driver.sln"
+        
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v2
+      
+    - name: Run Bandit Security Scan (for any Python scripts)
+      if: hashFiles('**/*.py') != ''
+      run: |
+        pip install bandit
+        bandit -r . -f json -o bandit-report.json || true
+        
+    - name: Upload Security Scan Results
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-reports
+        path: |
+          bandit-report.json
+          
+  dependency-check:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Run OWASP Dependency Check
+      run: |
+        # Download dependency-check
+        Invoke-WebRequest -Uri "https://github.com/jeremylong/DependencyCheck/releases/latest/download/dependency-check-8.4.0-release.zip" -OutFile "dependency-check.zip"
+        Expand-Archive -Path "dependency-check.zip" -DestinationPath "dependency-check"
+        
+        # Run dependency check
+        .\dependency-check\bin\dependency-check.bat --project "IOCTL-Driver" --scan . --format HTML --format JSON
+        
+    - name: Upload Dependency Check Results
+      uses: actions/upload-artifact@v3
+      with:
+        name: dependency-check-reports
+        path: dependency-check-report.*
+
+  license-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: License Compatibility Check
+      run: |
+        # Check for license headers in source files
+        echo "Checking license headers..."
+        
+        missing_license=0
+        for file in $(find . -name "*.cpp" -o -name "*.h" -o -name "*.c"); do
+          if ! grep -q "LICENSE\|Copyright\|MIT\|GPL\|BSD" "$file"; then
+            echo "Missing license header in: $file"
+            missing_license=1
+          fi
+        done
+        
+        if [ $missing_license -eq 1 ]; then
+          echo "Some files are missing license headers"
+          exit 1
+        fi
+        
+    - name: Check Third-Party Licenses
+      run: |
+        echo "Checking for third-party license files..."
+        
+        # Look for common third-party license indicators
+        find . -name "NOTICE*" -o -name "LICENSE*" -o -name "COPYING*" | while read file; do
+          echo "Found license file: $file"
+          cat "$file"
+          echo "---"
+        done
+
+  documentation-check:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Check Documentation Completeness
+      run: |
+        echo "Checking documentation..."
+        
+        # Required documentation files
+        required_docs=(
+          "README.md"
+          "README_ADVANCED.md" 
+          "KERNEL_DRIVER_COMPLETE.md"
+          "KDMAPPER_INTEGRATION.md"
+        )
+        
+        missing_docs=0
+        for doc in "${required_docs[@]}"; do
+          if [ ! -f "$doc" ]; then
+            echo "Missing required documentation: $doc"
+            missing_docs=1
+          fi
+        done
+        
+        if [ $missing_docs -eq 1 ]; then
+          echo "Some required documentation is missing"
+          exit 1
+        fi
+        
+    - name: Validate Markdown
+      run: |
+        # Install markdownlint
+        npm install -g markdownlint-cli
+        
+        # Check markdown files
+        markdownlint *.md || true
+        
+    - name: Check for TODO/FIXME Comments
+      run: |
+        echo "Checking for TODO/FIXME comments..."
+        
+        todo_count=$(grep -r "TODO\|FIXME\|XXX\|HACK" --include="*.cpp" --include="*.h" . | wc -l)
+        echo "Found $todo_count TODO/FIXME comments"
+        
+        if [ $todo_count -gt 10 ]; then
+          echo "Too many TODO/FIXME comments found ($todo_count). Consider resolving some."
+          grep -r "TODO\|FIXME\|XXX\|HACK" --include="*.cpp" --include="*.h" .
+        fi

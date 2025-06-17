@@ -1,0 +1,172 @@
+name: Pull Request Checks
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  pr-validation:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Fetch full history for proper diff
+        
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v1.3
+      
+    - name: Build Check
+      run: |
+        echo "Building solution to check for compilation errors..."
+        msbuild /m /p:Configuration=Debug /p:Platform=x64 "IOCTL Cheat Driver.sln"
+        
+    - name: Check PR Title Format
+      run: |
+        $pr_title = "${{ github.event.pull_request.title }}"
+        $valid_prefixes = @("feat:", "fix:", "docs:", "style:", "refactor:", "test:", "chore:")
+        
+        $is_valid = $false
+        foreach ($prefix in $valid_prefixes) {
+          if ($pr_title.StartsWith($prefix)) {
+            $is_valid = $true
+            break
+          }
+        }
+        
+        if (-not $is_valid) {
+          Write-Error "PR title must start with one of: $($valid_prefixes -join ', ')"
+          exit 1
+        }
+        
+    - name: Check Changed Files
+      run: |
+        echo "Checking which files were changed..."
+        
+        # Get list of changed files
+        $changed_files = git diff --name-only origin/main...HEAD
+        
+        echo "Changed files:"
+        $changed_files | ForEach-Object { echo "  $_" }
+        
+        # Check if sensitive files were modified
+        $sensitive_files = @(
+          "kernel_mode/source/main.cpp"
+          ".github/workflows/*"
+        )
+        
+        foreach ($file in $changed_files) {
+          foreach ($sensitive in $sensitive_files) {
+            if ($file -like $sensitive) {
+              echo "⚠️  Sensitive file modified: $file"
+              echo "Please ensure this change has been reviewed carefully."
+            }
+          }
+        }
+        
+    - name: Size Check
+      run: |
+        echo "Checking PR size..."
+        
+        $additions = ${{ github.event.pull_request.additions }}
+        $deletions = ${{ github.event.pull_request.deletions }}
+        $total_changes = $additions + $deletions
+        
+        echo "Lines added: $additions"
+        echo "Lines deleted: $deletions"
+        echo "Total changes: $total_changes"
+        
+        if ($total_changes -gt 1000) {
+          echo "⚠️  Large PR detected ($total_changes lines changed)"
+          echo "Consider breaking this into smaller PRs for easier review."
+        }
+        
+    - name: Check for Breaking Changes
+      run: |
+        echo "Checking for potential breaking changes..."
+        
+        # Check if public interfaces were modified
+        $interface_files = git diff --name-only origin/main...HEAD | Where-Object { 
+          $_ -like "*.h" -or $_ -like "**/headers/*" 
+        }
+        
+        if ($interface_files.Count -gt 0) {
+          echo "⚠️  Header files modified:"
+          $interface_files | ForEach-Object { echo "  $_" }
+          echo "Please verify backward compatibility."
+        }
+        
+    - name: Documentation Check
+      run: |
+        echo "Checking if documentation needs updates..."
+        
+        $code_changes = git diff --name-only origin/main...HEAD | Where-Object { 
+          $_ -like "*.cpp" -or $_ -like "*.h" 
+        }
+        
+        $doc_changes = git diff --name-only origin/main...HEAD | Where-Object { 
+          $_ -like "*.md" 
+        }
+        
+        if ($code_changes.Count -gt 0 -and $doc_changes.Count -eq 0) {
+          echo "⚠️  Code changes detected but no documentation updates"
+          echo "Consider updating README or other documentation if needed."
+        }
+
+  auto-assign-reviewers:
+    runs-on: ubuntu-latest
+    if: github.event.action == 'opened'
+    
+    steps:
+    - name: Auto-assign reviewers
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const reviewers = ['maintainer1', 'maintainer2']; // Replace with actual usernames
+          
+          // Only assign if PR author is not a maintainer
+          if (!reviewers.includes(context.payload.pull_request.user.login)) {
+            await github.rest.pulls.requestReviewers({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              reviewers: reviewers
+            });
+          }
+          
+    - name: Add labels based on files changed
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const { data: files } = await github.rest.pulls.listFiles({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            pull_number: context.payload.pull_request.number
+          });
+          
+          const labels = [];
+          
+          for (const file of files) {
+            if (file.filename.includes('kernel_mode/')) {
+              labels.push('kernel-mode');
+            }
+            if (file.filename.includes('user_mode/')) {
+              labels.push('user-mode');
+            }
+            if (file.filename.includes('.md')) {
+              labels.push('documentation');
+            }
+            if (file.filename.includes('.github/')) {
+              labels.push('ci/cd');
+            }
+          }
+          
+          if (labels.length > 0) {
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              labels: [...new Set(labels)] // Remove duplicates
+            });
+          }

@@ -1,0 +1,273 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+
+env:
+  BUILD_CONFIGURATION: Release
+
+jobs:
+  create-release:
+    runs-on: windows-latest
+    
+    outputs:
+      release_id: ${{ steps.create_release.outputs.id }}
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Get version
+      id: get_version
+      run: |
+        if ("${{ github.event_name }}" -eq "workflow_dispatch") {
+          $version = "${{ github.event.inputs.version }}"
+        } else {
+          $version = "${{ github.ref_name }}"
+        }
+        echo "version=$version" >> $env:GITHUB_OUTPUT
+        echo "Version: $version"
+        
+    - name: Generate changelog
+      id: changelog
+      run: |
+        $version = "${{ steps.get_version.outputs.version }}"
+        
+        # Get the previous tag
+        $previous_tag = git describe --tags --abbrev=0 HEAD~1 2>$null
+        if (-not $previous_tag) {
+          $previous_tag = git rev-list --max-parents=0 HEAD
+        }
+        
+        echo "Generating changelog from $previous_tag to HEAD"
+        
+        # Generate changelog
+        $changelog = @()
+        $changelog += "## What's Changed"
+        $changelog += ""
+        
+        # Get commit messages since last tag
+        $commits = git log --pretty=format:"%s (%h)" "$previous_tag..HEAD"
+        
+        # Categorize commits
+        $features = @()
+        $fixes = @()
+        $others = @()
+        
+        foreach ($commit in $commits) {
+          if ($commit -match "^feat:") {
+            $features += "- $commit"
+          } elseif ($commit -match "^fix:") {
+            $fixes += "- $commit"
+          } else {
+            $others += "- $commit"
+          }
+        }
+        
+        if ($features.Count -gt 0) {
+          $changelog += "### 🚀 Features"
+          $changelog += $features
+          $changelog += ""
+        }
+        
+        if ($fixes.Count -gt 0) {
+          $changelog += "### 🐛 Bug Fixes"
+          $changelog += $fixes
+          $changelog += ""
+        }
+        
+        if ($others.Count -gt 0) {
+          $changelog += "### 🔧 Other Changes"
+          $changelog += $others
+          $changelog += ""
+        }
+        
+        $changelog_text = $changelog -join "`n"
+        
+        # Save to file and output
+        $changelog_text | Out-File -FilePath "CHANGELOG.md" -Encoding UTF8
+        
+        # Set output (escape newlines for GitHub Actions)
+        $escaped_changelog = $changelog_text -replace "`n", "%0A" -replace "`r", "%0D"
+        echo "changelog=$escaped_changelog" >> $env:GITHUB_OUTPUT
+        
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.get_version.outputs.version }}
+        release_name: IOCTL Kernel Anti-Anti-Debug Driver ${{ steps.get_version.outputs.version }}
+        body: |
+          # IOCTL Kernel Anti-Anti-Debug Driver ${{ steps.get_version.outputs.version }}
+          
+          ${{ steps.changelog.outputs.changelog }}
+          
+          ## 📋 Features
+          - Advanced kernel-mode anti-anti-debug driver
+          - User-mode management application with modern GUI
+          - Process hiding and protection capabilities
+          - Network traffic interception via MITM proxy
+          - Automatic kdmapper integration for driver loading
+          - Seamless x64dbg debugging integration
+          - Advanced process creation in debug environment
+          
+          ## 🛠️ Installation
+          1. Download and extract the release package
+          2. Run `start_advanced_debug_manager.bat` as Administrator
+          3. The application will automatically download kdmapper and load the driver
+          4. Follow the GUI instructions for target process selection
+          
+          ## 📚 Documentation
+          - `README_ADVANCED.md` - Detailed usage instructions
+          - `KERNEL_DRIVER_COMPLETE.md` - Technical implementation details
+          - `KDMAPPER_INTEGRATION.md` - Driver loading and kdmapper setup
+          
+          ## ⚠️ Important Notes
+          - This tool is for educational and authorized security testing purposes only
+          - Administrator privileges are required for operation
+          - Windows 10/11 x64 support only
+          - Ensure Windows Defender exclusions are configured if needed
+          
+          ## 🔧 System Requirements
+          - Windows 10/11 x64
+          - Administrator privileges
+          - Visual C++ Redistributable 2022
+          - .NET Framework 4.8 or higher
+          
+          **Full Changelog**: https://github.com/${{ github.repository }}/compare/${{ steps.changelog.outputs.previous_tag }}...${{ steps.get_version.outputs.version }}
+        draft: false
+        prerelease: false
+
+  build-and-upload:
+    runs-on: windows-latest
+    needs: create-release
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v1.3
+      
+    - name: Setup Windows SDK
+      uses: GuillaumeFalourd/setup-windows10-sdk-action@v1.11
+      with:
+        sdk-version: 26100
+        
+    - name: Build Solution
+      run: |
+        msbuild /m /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform=x64 "IOCTL Cheat Driver.sln"
+        
+    - name: Create Release Package
+      run: |
+        $version = if ("${{ github.event_name }}" -eq "workflow_dispatch") { 
+          "${{ github.event.inputs.version }}" 
+        } else { 
+          "${{ github.ref_name }}" 
+        }
+        
+        # Create release directory structure
+        New-Item -ItemType Directory -Force -Path "release"
+        New-Item -ItemType Directory -Force -Path "release/kernel"
+        New-Item -ItemType Directory -Force -Path "release/usermode"
+        New-Item -ItemType Directory -Force -Path "release/tools"
+        New-Item -ItemType Directory -Force -Path "release/docs"
+        
+        # Copy built artifacts
+        if (Test-Path "x64/build/*.sys") {
+          Copy-Item "x64/build/*.sys" "release/kernel/"
+        }
+        if (Test-Path "x64/build/*.inf") {
+          Copy-Item "x64/build/*.inf" "release/kernel/"
+        }
+        if (Test-Path "x64/build/*.exe") {
+          Copy-Item "x64/build/*.exe" "release/usermode/"
+        }
+        if (Test-Path "x64/build/*.dll") {
+          Copy-Item "x64/build/*.dll" "release/usermode/"
+        }
+        
+        # Copy documentation
+        Copy-Item "README.md" "release/docs/"
+        Copy-Item "README_ADVANCED.md" "release/docs/"
+        Copy-Item "KERNEL_DRIVER_COMPLETE.md" "release/docs/"
+        Copy-Item "KDMAPPER_INTEGRATION.md" "release/docs/"
+        Copy-Item "LICENSE" "release/"
+        
+        # Copy batch scripts and config
+        Copy-Item "start_advanced_debug_manager.bat" "release/"
+        Copy-Item "stop_driver.bat" "release/"
+        Copy-Item "config_example.ini" "release/config.ini"
+        
+        # Create version info file
+        echo "IOCTL Kernel Anti-Anti-Debug Driver" > release/VERSION.txt
+        echo "Version: $version" >> release/VERSION.txt
+        echo "Build Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss UTC')" >> release/VERSION.txt
+        echo "Commit: ${{ github.sha }}" >> release/VERSION.txt
+        
+        # Create ZIP archive
+        $archive_name = "IOCTL-Kernel-Anti-Anti-Debug-Driver-$version.zip"
+        Compress-Archive -Path "release/*" -DestinationPath $archive_name
+        
+        echo "archive_name=$archive_name" >> $env:GITHUB_ENV
+        
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ${{ env.archive_name }}
+        asset_name: ${{ env.archive_name }}
+        asset_content_type: application/zip
+        
+    - name: Upload Debug Symbols (if available)
+      run: |
+        if (Test-Path "x64/build/*.pdb") {
+          $symbols_name = "IOCTL-Debug-Symbols-${{ github.ref_name }}.zip"
+          Compress-Archive -Path "x64/build/*.pdb" -DestinationPath $symbols_name
+          echo "symbols_name=$symbols_name" >> $env:GITHUB_ENV
+        }
+        
+    - name: Upload Debug Symbols Asset
+      if: env.symbols_name
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: ${{ env.symbols_name }}
+        asset_name: ${{ env.symbols_name }}
+        asset_content_type: application/zip
+
+  notify:
+    runs-on: ubuntu-latest
+    needs: [create-release, build-and-upload]
+    if: always()
+    
+    steps:
+    - name: Notify Success
+      if: needs.build-and-upload.result == 'success'
+      run: |
+        echo "✅ Release ${{ github.ref_name }} created successfully!"
+        echo "🔗 Release URL: https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
+        
+    - name: Notify Failure
+      if: needs.build-and-upload.result == 'failure'
+      run: |
+        echo "❌ Release ${{ github.ref_name }} failed!"
+        echo "Please check the workflow logs for details."
+        exit 1

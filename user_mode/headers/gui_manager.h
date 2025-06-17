@@ -1,13 +1,21 @@
 #pragma once
 
 #include <windows.h>
-#include <commctrl.h>
+#include public:
+    GuiManager();
+    GuiManager();
+
+    bool Initialize();
+    bool InitializeKdMapper();
+    void Run();
+    void Shutdown;rl.h>
 #include <string>
 #include <vector>
 #include <memory>
 #include "../headers/debug_manager.h"
 #include "../headers/mitm_proxy.h"
 #include "../headers/driver_helper.h"
+#include "../headers/kdmapper_manager.h"
 
 #pragma comment(lib, "comctl32.lib")
 
@@ -30,6 +38,7 @@ private:
     std::unique_ptr<DebugManager> debug_manager;
     std::unique_ptr<MitmProxy> mitm_proxy;
     std::unique_ptr<ioctl::Driver> driver;
+    std::unique_ptr<KdMapperManager> kdmapper_manager;
     
     struct ProcessInfo
     {

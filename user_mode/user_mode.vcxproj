@@ -152,6 +152,7 @@
     <ClCompile Include="source\mitm_proxy.cpp" />
     <ClCompile Include="source\gui_manager.cpp" />
     <ClCompile Include="source\config_manager.cpp" />
+    <ClCompile Include="source\kdmapper_manager.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="headers\driver_helper.h" />
@@ -162,6 +163,7 @@
     <ClInclude Include="headers\mitm_proxy.h" />
     <ClInclude Include="headers\gui_manager.h" />
     <ClInclude Include="headers\config_manager.h" />
+    <ClInclude Include="headers\kdmapper_manager.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

@@ -25,6 +25,7 @@ GuiManager::GuiManager()
     debug_manager = std::make_unique<DebugManager>();
     mitm_proxy = std::make_unique<MitmProxy>();
     driver = std::make_unique<ioctl::Driver>();
+    kdmapper_manager = std::make_unique<KdMapperManager>();
 }
 
 GuiManager::~GuiManager()
@@ -54,9 +55,148 @@ bool GuiManager::Initialize()
         OnPacketReceived(packet);
     });
 
+    // Setup kdmapper logging
+    kdmapper_manager->SetLogCallback([this](const std::string& message) {
+        LogMessage(message);
+    });
+
     RefreshProcessList();
     LogMessage("Application initialized successfully");
 
+    return true;
+}
+
+bool GuiManager::InitializeKdMapper()
+{
+    LogMessage("=== Initializing kdmapper and driver mapping ===");
+    
+    // Step 1: Download kdmapper if needed
+    if (!kdmapper_manager->DownloadKdMapper())
+    {
+        LogMessage("ERROR: Failed to download kdmapper!");
+        MessageBoxA(main_window, 
+                   "Failed to download kdmapper!\n"
+                   "Please check your internet connection or download manually.",
+                   "kdmapper Error", 
+                   MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    LogMessage("kdmapper ready");
+
+    // Step 2: Find driver file
+    std::vector<std::string> driver_search_paths = {
+        "x64\\Debug\\kernel_mode.sys",
+        "x64\\Release\\kernel_mode.sys", 
+        "kernel_mode\\x64\\Debug\\kernel_mode.sys",
+        "kernel_mode\\x64\\Release\\kernel_mode.sys",
+        "kernel_mode.sys"
+    };
+
+    std::string driver_path;
+    bool driver_found = false;
+
+    for (const auto& path : driver_search_paths)
+    {
+        if (KdMapperManager::FileExists(path))
+        {
+            driver_path = path;
+            driver_found = true;
+            break;
+        }
+    }
+
+    if (!driver_found)
+    {
+        LogMessage("ERROR: Driver file (kernel_mode.sys) not found!");
+        
+        int result = MessageBoxA(main_window,
+                               "Driver file (kernel_mode.sys) not found!\n\n"
+                               "Please compile the kernel_mode project first.\n"
+                               "Expected locations:\n"
+                               "- x64\\Debug\\kernel_mode.sys\n"
+                               "- x64\\Release\\kernel_mode.sys\n\n"
+                               "Do you want to select the driver file manually?",
+                               "Driver Not Found",
+                               MB_YESNO | MB_ICONWARNING);
+
+        if (result == IDYES)
+        {
+            OPENFILENAMEA ofn = {};
+            char file_path[MAX_PATH] = {};
+
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = main_window;
+            ofn.lpstrFile = file_path;
+            ofn.nMaxFile = sizeof(file_path);
+            ofn.lpstrFilter = "Driver Files\0*.sys\0All Files\0*.*\0";
+            ofn.nFilterIndex = 1;
+            ofn.lpstrTitle = "Select kernel_mode.sys driver file";
+            ofn.Flags = OFN_PATHMUSTEXIST | OFN_FILEMUSTEXIST;
+
+            if (GetOpenFileNameA(&ofn))
+            {
+                driver_path = file_path;
+                driver_found = true;
+            }
+        }
+
+        if (!driver_found)
+        {
+            return false;
+        }
+    }
+
+    LogMessage("Driver found: " + driver_path);
+
+    // Step 3: Map driver with kdmapper
+    LogMessage("Mapping driver with kdmapper...");
+    LogMessage("WARNING: This operation requires administrator privileges!");
+
+    if (!kdmapper_manager->MapDriver(driver_path))
+    {
+        LogMessage("ERROR: Failed to map driver!");
+        MessageBoxA(main_window,
+                   "Failed to map driver with kdmapper!\n\n"
+                   "Possible causes:\n"
+                   "- Administrator privileges required\n"
+                   "- Antivirus blocking kdmapper\n"
+                   "- Driver signing issues\n"
+                   "- Windows Defender or HVCI enabled\n\n"
+                   "Please run as Administrator and disable real-time protection.",
+                   "Driver Mapping Failed",
+                   MB_OK | MB_ICONERROR);
+        return false;
+    }
+
+    LogMessage("Driver mapped successfully!");
+
+    // Step 4: Test driver communication
+    LogMessage("Testing driver communication...");
+    
+    // Give driver time to initialize
+    Sleep(2000);
+
+    // Test if we can communicate with the driver
+    ioctl::Driver test_driver;
+    if (test_driver.driver_handle == INVALID_HANDLE_VALUE)
+    {
+        LogMessage("WARNING: Cannot communicate with mapped driver!");
+        LogMessage("The driver may need additional time to initialize or may have failed to load.");
+        
+        MessageBoxA(main_window,
+                   "Driver mapped but communication test failed!\n\n"
+                   "This may be normal - the driver might need more time to initialize.\n"
+                   "You can continue and try debugging operations.",
+                   "Driver Communication Warning",
+                   MB_OK | MB_ICONWARNING);
+    }
+    else
+    {
+        LogMessage("Driver communication successful!");
+    }
+
+    LogMessage("=== kdmapper initialization complete ===");
     return true;
 }
 
@@ -83,6 +223,12 @@ void GuiManager::Shutdown()
     if (debug_manager)
     {
         debug_manager->StopDebugging();
+    }
+
+    if (kdmapper_manager && kdmapper_manager->IsDriverMapped())
+    {
+        LogMessage("Cleaning up mapped driver...");
+        kdmapper_manager->UnmapDriver();
     }
 
     if (main_window)

@@ -24,16 +24,61 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         return 1;
     }
 
-    // Check if driver is accessible
+    // Show loading message
+    MessageBoxA(nullptr, 
+               "Advanced Debug Manager\n\n"
+               "The application will now:\n"
+               "1. Download kdmapper (if needed)\n"
+               "2. Map the kernel driver\n"
+               "3. Initialize debug environment\n\n"
+               "This may take a few moments and requires administrator privileges.\n"
+               "Please ensure antivirus real-time protection is disabled.",
+               "Initializing", 
+               MB_OK | MB_ICONINFORMATION);
+
+    // Initialize kdmapper and map driver
+    if (!gui_manager->InitializeKdMapper())
+    {
+        int result = MessageBoxA(nullptr,
+                               "Failed to initialize kdmapper and map driver!\n\n"
+                               "You can continue without the kernel driver, but some features will be limited.\n\n"
+                               "Continue anyway?",
+                               "Initialization Warning",
+                               MB_YESNO | MB_ICONWARNING);
+        
+        if (result == IDNO)
+        {
+            CoUninitialize();
+            return 1;
+        }
+    }
+
+    // Final driver check for user feedback
     ioctl::Driver driver;
     if (driver.driver_handle == INVALID_HANDLE_VALUE)
     {
         MessageBoxA(nullptr, 
-                   "Warning: Kernel driver not accessible.\n"
-                   "Some features may not work properly.\n"
+                   "Warning: Kernel driver not accessible.\n\n"
+                   "Features that will be limited:\n"
+                   "- Advanced anti-anti-debug bypasses\n"
+                   "- Process hiding capabilities\n"
+                   "- Kernel-level memory protection\n\n"
+                   "Basic debugging and MITM proxy will still work.\n"
                    "Make sure the driver is loaded and you have administrator privileges.",
                    "Driver Warning", 
                    MB_OK | MB_ICONWARNING);
+    }
+    else
+    {
+        MessageBoxA(nullptr,
+                   "✅ Initialization Complete!\n\n"
+                   "✓ kdmapper downloaded\n"
+                   "✓ Kernel driver mapped\n" 
+                   "✓ Driver communication established\n"
+                   "✓ All features available\n\n"
+                   "Ready for advanced debugging!",
+                   "Success",
+                   MB_OK | MB_ICONINFORMATION);
     }
 
     // Run the application

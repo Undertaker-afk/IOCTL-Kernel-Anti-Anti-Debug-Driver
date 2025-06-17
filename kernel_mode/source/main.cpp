@@ -79,15 +79,75 @@ extern "C" {
 
 	NTKERNELAPI PPEB PsGetProcessPeb(PEPROCESS Process);
 	NTKERNELAPI PVOID PsGetProcessDebugPort(PEPROCESS Process);
-	NTKERNELAPI NTSTATUS PsSetProcessDebugPort(PEPROCESS Process, PVOID DebugPort);
-	NTKERNELAPI UCHAR* PsGetProcessImageFileName(PEPROCESS Process);
+	NTKERNELAPI NTSTATUS PsSetProcessDebugPort(PEPROCESS Process, PVOID DebugPort);	NTKERNELAPI UCHAR* PsGetProcessImageFileName(PEPROCESS Process);
+
+	// Custom PEB structure for kernel mode access
+	typedef struct _KERNEL_PEB {
+		BOOLEAN InheritedAddressSpace;
+		BOOLEAN ReadImageFileExecOptions;
+		BOOLEAN BeingDebugged;
+		union {
+			BOOLEAN BitField;
+			struct {
+				BOOLEAN ImageUsesLargePages : 1;
+				BOOLEAN IsProtectedProcess : 1;
+				BOOLEAN IsLegacyProcess : 1;
+				BOOLEAN IsImageDynamicallyRelocated : 1;
+				BOOLEAN SkipPatchingUser32Forwarders : 1;
+				BOOLEAN SpareBits : 3;
+			};
+		};
+		HANDLE Mutant;
+		PVOID ImageBaseAddress;
+		PVOID Ldr;
+		PVOID ProcessParameters;
+		PVOID SubSystemData;
+		PVOID ProcessHeap;
+		PVOID FastPebLock;
+		PVOID AtlThunkSListPtr;
+		PVOID IFEOKey;
+		union {
+			ULONG CrossProcessFlags;
+			struct {
+				ULONG ProcessInJob : 1;
+				ULONG ProcessInitializing : 1;
+				ULONG ProcessUsingVEH : 1;
+				ULONG ProcessUsingVCH : 1;
+				ULONG ProcessUsingFTH : 1;
+				ULONG ReservedBits0 : 27;
+			};
+		};
+		union {
+			PVOID KernelCallbackTable;
+			PVOID UserSharedInfoPtr;
+		};
+		ULONG SystemReserved[1];
+		ULONG AtlThunkSListPtr32;
+		PVOID ApiSetMap;
+		ULONG TlsExpansionCounter;
+		PVOID TlsBitmap;
+		ULONG TlsBitmapBits[2];
+		PVOID ReadOnlySharedMemoryBase;
+		PVOID HotpatchInformation;
+		PVOID* ReadOnlyStaticServerData;
+		PVOID AnsiCodePageData;
+		PVOID OemCodePageData;
+		PVOID UnicodeCaseTableData;
+		ULONG NumberOfProcessors;
+		ULONG NtGlobalFlag;
+	} KERNEL_PEB, *PKERNEL_PEB;
 
 	// Forward declaration for unload routine
 	VOID DriverUnload(PDRIVER_OBJECT driver_object);
 }
 
 namespace driver
-{
+{	// Forward declarations
+	VOID ProcessNotifyCallback(HANDLE ParentId, HANDLE ProcessId, BOOLEAN Create);
+	NTSTATUS create(PDEVICE_OBJECT device_object, PIRP irp);
+	NTSTATUS close(PDEVICE_OBJECT device_object, PIRP irp);
+	NTSTATUS device_control(PDEVICE_OBJECT device_object, PIRP irp);
+
 	// Process notification callbacks
 	static PEPROCESS g_target_process = nullptr;
 	static HANDLE g_target_pid = nullptr;
@@ -107,11 +167,16 @@ namespace driver
 
 	// Memory layout constants
 	#define MM_SHARED_USER_DATA_VA 0xFFFFF78000000000ULL
-
-	// Token privilege constants (simplified for kernel use)
+	// Token privilege constants (avoid redefinition)
+	#ifndef TOKEN_ADJUST_PRIVILEGES
 	#define TOKEN_ADJUST_PRIVILEGES 0x0020
+	#endif
+	#ifndef TOKEN_QUERY
 	#define TOKEN_QUERY 0x0008
+	#endif
+	#ifndef SE_PRIVILEGE_ENABLED
 	#define SE_PRIVILEGE_ENABLED 0x00000002L
+	#endif
 
 	namespace codes
 	{
@@ -167,7 +232,6 @@ namespace driver
 		HANDLE ProcessId;
 		BOOLEAN IsHidden;
 	};
-
 	NTSTATUS create(PDEVICE_OBJECT device_object, PIRP irp)
 	{
 		UNREFERENCED_PARAMETER(device_object);
@@ -184,7 +248,9 @@ namespace driver
 		IoCompleteRequest(irp, IO_NO_INCREMENT);
 
 		return irp->IoStatus.Status;
-	}	// Helper functions
+	}
+
+	// Helper functions
 	NTSTATUS EnableDebugPrivilege()
 	{
 		// In kernel mode, we already have all privileges
@@ -210,13 +276,19 @@ namespace driver
 		// Method 2: Set NoDebugInherit flag
 		ULONG* ProcessFlags = (ULONG*)((UCHAR*)Process + EPROCESS_FLAGS_OFFSET);
 		*ProcessFlags |= 0x4; // NoDebugInherit flag
-
-		// Method 3: Hide from PEB
-		PPEB Peb = PsGetProcessPeb(Process);
-		if (Peb)
+		// Method 3: Hide from PEB (safe kernel access)
+		PKERNEL_PEB Peb = (PKERNEL_PEB)PsGetProcessPeb(Process);
+		if (Peb && MmIsAddressValid(Peb))
 		{
-			Peb->BeingDebugged = FALSE;
-			Peb->NtGlobalFlag &= ~0x70; // Clear heap flags
+			__try
+			{
+				Peb->BeingDebugged = FALSE;
+				Peb->NtGlobalFlag &= ~0x70; // Clear heap flags
+			}
+			__except(EXCEPTION_EXECUTE_HANDLER)
+			{
+				DbgPrint("[-] Failed to access PEB safely\n");
+			}
 		}
 
 		ObDereferenceObject(Process);
@@ -231,28 +303,39 @@ namespace driver
 		
 		if (!NT_SUCCESS(Status))
 			return Status;
-
 		// Patch common anti-debug techniques
-		PPEB Peb = PsGetProcessPeb(Process);
-		if (Peb)
-		{
-			// Clear BeingDebugged flag
-			Peb->BeingDebugged = FALSE;
-
-			// Clear NtGlobalFlag
-			Peb->NtGlobalFlag &= ~0x70;
-
-			// Clear heap flags
-			if (Peb->ProcessHeap)
+		PKERNEL_PEB Peb = (PKERNEL_PEB)PsGetProcessPeb(Process);
+		if (Peb && MmIsAddressValid(Peb))
+		{			__try
 			{
-				// Patch heap header flags
-				ULONG* HeapFlags = (ULONG*)((UCHAR*)Peb->ProcessHeap + 0x40);
-				*HeapFlags &= ~0x02; // HEAP_TAIL_CHECKING_ENABLED
-				*HeapFlags &= ~0x01; // HEAP_FREE_CHECKING_ENABLED
+				// Clear BeingDebugged flag
+				Peb->BeingDebugged = FALSE;
 
-				ULONG* HeapForceFlags = (ULONG*)((UCHAR*)Peb->ProcessHeap + 0x44);
-				*HeapForceFlags &= ~0x02;
-				*HeapForceFlags &= ~0x01;
+				// Clear NtGlobalFlag
+				Peb->NtGlobalFlag &= ~0x70;
+
+				// Clear heap flags
+				if (Peb->ProcessHeap && MmIsAddressValid(Peb->ProcessHeap))
+				{
+					// Patch heap header flags - be very careful with offsets
+					ULONG* HeapFlags = (ULONG*)((UCHAR*)Peb->ProcessHeap + 0x40);
+					if (MmIsAddressValid(HeapFlags))
+					{
+						*HeapFlags &= ~0x02; // HEAP_TAIL_CHECKING_ENABLED
+						*HeapFlags &= ~0x01; // HEAP_FREE_CHECKING_ENABLED
+					}
+
+					ULONG* HeapForceFlags = (ULONG*)((UCHAR*)Peb->ProcessHeap + 0x44);
+					if (MmIsAddressValid(HeapForceFlags))
+					{
+						*HeapForceFlags &= ~0x02;
+						*HeapForceFlags &= ~0x01;
+					}
+				}
+			}
+			__except(EXCEPTION_EXECUTE_HANDLER)
+			{
+				DbgPrint("[-] Failed to access PEB safely\n");
 			}
 		}
 
@@ -420,31 +503,7 @@ namespace driver
 			HideFromDebugger(ProcessId);
 		}
 	}
-
-	NTSTATUS create(PDEVICE_OBJECT device_object, PIRP irp)
-	{
-		UNREFERENCED_PARAMETER(device_object);
-		
-		DbgPrint("[+] Device control called.\n");
-
-		NTSTATUS status = STATUS_UNSUCCESSFUL;
-
-		// We need this to determine which code was passed through
-		PIO_STACK_LOCATION stack_irp = IoGetCurrentIrpStackLocation(irp);
-
-		// Access the request object sent from user mode.
-		auto request = reinterpret_cast<Request*>(irp->AssociatedIrp.SystemBuffer);
-
-		if (stack_irp == nullptr || request == nullptr)
-		{
-			IoCompleteRequest(irp, IO_NO_INCREMENT);
-			return status;
-		}
-
-		// The target process we want to access.
-		static PEPROCESS target_process = nullptr;
-
-		const ULONG control_code = stack_irp->Parameters.DeviceIoControl.IoControlCode;	NTSTATUS device_control(PDEVICE_OBJECT device_object, PIRP irp)
+	NTSTATUS device_control(PDEVICE_OBJECT device_object, PIRP irp)
 	{
 		UNREFERENCED_PARAMETER(device_object);
 		
@@ -574,11 +633,9 @@ namespace driver
 
 		irp->IoStatus.Status = status;
 		irp->IoStatus.Information = sizeof(Request);
-
 		IoCompleteRequest(irp, IO_NO_INCREMENT);
 
 		return irp->IoStatus.Status;
-	}
 	}
 }
 

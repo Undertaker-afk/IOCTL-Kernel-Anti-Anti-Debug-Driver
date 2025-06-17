@@ -1,14 +1,7 @@
 #pragma once
 
 #include <windows.h>
-#include public:
-    GuiManager();
-    GuiManager();
-
-    bool Initialize();
-    bool InitializeKdMapper();
-    void Run();
-    void Shutdown;rl.h>
+#include <commctrl.h>
 #include <string>
 #include <vector>
 #include <memory>

@@ -1,66 +1,59 @@
 #include <iostream>
-#include <cstdint>
-#include <map>
+#include <memory>
 
-#include <Windows.h>
-#include <psapi.h>
-#include <TlHelp32.h>
-
-#include "../headers/process_helper.h"
+#ifdef _WIN32
+#include <windows.h>
+#include "../headers/gui_manager.h"
 #include "../headers/driver_helper.h"
 #include "../headers/error_helper.h"
-#include "../headers/offsets.h"
+#endif
 
+#ifdef _WIN32
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
+{
+    // Initialize COM for file dialogs
+    CoInitialize(nullptr);
 
+    // Create and initialize GUI manager
+    auto gui_manager = std::make_unique<GuiManager>();
+    
+    if (!gui_manager->Initialize())
+    {
+        MessageBoxA(nullptr, "Failed to initialize application", "Error", MB_OK | MB_ICONERROR);
+        CoUninitialize();
+        return 1;
+    }
+
+    // Check if driver is accessible
+    ioctl::Driver driver;
+    if (driver.driver_handle == INVALID_HANDLE_VALUE)
+    {
+        MessageBoxA(nullptr, 
+                   "Warning: Kernel driver not accessible.\n"
+                   "Some features may not work properly.\n"
+                   "Make sure the driver is loaded and you have administrator privileges.",
+                   "Driver Warning", 
+                   MB_OK | MB_ICONWARNING);
+    }
+
+    // Run the application
+    gui_manager->Run();
+
+    // Cleanup
+    gui_manager->Shutdown();
+    CoUninitialize();
+
+    return 0;
+}
+#endif
+
+// Console entry point for debugging
 int main()
 {
-	const char* process_name = "Notepad.exe";
-	Process process(process_name);
-	
-	ioctl::Driver driver;
-
-	// Check if process is Valid
-	if (process.handle == INVALID_HANDLE_VALUE)
-	{
-		std::string errorMsg = GetErrorString(GetLastError());
-
-		std::cout << "[-] Failed to create process handle: " << errorMsg;
-		return 1;
-	}
-
-	// Optional: Print all modules loaded into the process. Remove if not needed.
-	{
-		std::cout << "\n--------------------------------------\n";
-
-		std::cout << "Modules loaded into " << process_name << ": \n";
-		process.PrintAllModules(true);
-
-		std::cout << "--------------------------------------\n\n";
-	}
-	
-
-
-	// Check if driver handle is valid
-	if (driver.driver_handle == INVALID_HANDLE_VALUE)
-	{
-		std::string errorMsg = GetErrorString(GetLastError());
-
-		std::cout << "[-] Failed to create driver handle: " << errorMsg << '\n';
-		std::cin.get();
-		return 1;
-	}
-
-	// Your code here
-	
-	if (driver.attach_to_process(process.pid))
-	{
-
-	}
-
-    // End
-
-	std::cout << "End of Cheat.\n";
-	std::cin.get();
-
-	return 0;
+#ifdef _WIN32
+    return WinMain(GetModuleHandle(nullptr), nullptr, GetCommandLineA(), SW_SHOW);
+#else
+    std::cout << "This application is designed for Windows only." << std::endl;
+    return 1;
+#endif
 }

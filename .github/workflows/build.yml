@@ -103,13 +103,13 @@ jobs:
       uses: actions/checkout@v4
       
     - name: Download Kernel Driver Artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: kernel-driver-${{ env.BUILD_CONFIGURATION }}
         path: ./artifacts/kernel/
         
     - name: Download User Mode Artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: usermode-app-${{ env.BUILD_CONFIGURATION }}
         path: ./artifacts/usermode/
